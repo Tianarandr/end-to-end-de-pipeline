@@ -1,0 +1,42 @@
+name: 'delivery_pipeline'
+version: '2.0.0'
+config-version: 2
+
+profile: 'delivery_pipeline'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # A restaurant counts as "late" once delivery exceeds this. Kept as a var
+  # instead of hardcoded so changing it is a one-line edit, not a hunt
+  # through every model that references it (see macros/metrics.sql).
+  delivery_sla_threshold_minutes: 45
+
+models:
+  delivery_pipeline:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+    semantic:
+      +materialized: view
+      +schema: semantic
+  snapshot:
+    delivery_pipeline:
+      +materialized: snapshot
+      +schema: snapshots
+
+# Blocking vs. warning severity is set per-test in each model's schema YAML
+# (see docs/architecture/07-data-quality.md), not globally here. The right
+# severity depends on the column.

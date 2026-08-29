@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: raw
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'DELIVERY_DEV') }}"
+    schema: RAW
+    description: >
+      Bronze layer. Verbatim copy of source CSVs plus technical ingestion
+      metadata (_ingested_at, _source_file, _batch_id, _record_hash).
+      No business transformation happens here. See
+      docs/architecture/03-data-model.md#bronze-raw-schema.
+    config:
+      loaded_at_field: _ingested_at
+      freshness:
+        warn_after: { count: 24, period: hour }
+        error_after: { count: 48, period: hour }
+    tables:
+      - name: restaurants
+        description: One row per restaurant as loaded from the source extract (may contain duplicates/invalid ids; stg_restaurants cleans this up).
+      - name: users
+        description: One row per customer as loaded from the source extract.
+      - name: food
+        description: One row per distinct food item.
+      - name: menu
+        description: Restaurant x food x price combinations.
+      - name: orders
+        description: One row per order, as text; staging owns all type casting.
+      - name: order_items
+        description: One row per order line item.
+      - name: reviews
+        description: One row per customer review.

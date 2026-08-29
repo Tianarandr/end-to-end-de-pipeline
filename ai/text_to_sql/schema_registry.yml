@@ -1,0 +1,29 @@
+# The text-to-SQL allowlist: exactly the SEMANTIC views the LLM is told
+# about, and the only tables guardrails.py will accept in generated SQL.
+# Kept hand-authored (not introspected from the dbt manifest) since at five
+# views a generated manifest parser would be more moving parts than the
+# problem needs. Revisit if the semantic layer grows enough that this drifts
+# out of sync with models/semantic/_semantic.yml.
+
+schema: SEMANTIC
+
+views:
+  SEM_ORDERS:
+    description: Order-grain view. One row per order.
+    columns: [order_id, order_timestamp, order_date, customer_id, age_segment, restaurant_id, city, cuisine, payment_method, order_status, is_delivered, sales_amount, discount, delivery_fee, gst, customer_rating, delivery_time_min]
+
+  SEM_REVENUE_DAILY:
+    description: Canonical daily revenue view. One row per (order_date, city). Prefer this for GMV/cancellation-rate/AOV questions.
+    columns: [order_date, city, orders, delivered_orders, cancel_rate, gross_merchandise_value, average_order_value]
+
+  SEM_RESTAURANT_PERFORMANCE:
+    description: One row per restaurant. Prefer this for restaurant-level revenue/rating/SLA questions.
+    columns: [restaurant_id, restaurant_name, city, cuisine, orders, revenue, avg_customer_rating, avg_delivery_min, cancel_rate]
+
+  SEM_DELIVERY_SLA:
+    description: One row per (city, order_hour), delivered orders only.
+    columns: [city, order_hour, delivered_orders, p50_delivery_min, p90_delivery_min, late_rate]
+
+  SEM_REVIEWS:
+    description: Review content and rating. Does not include customer_id.
+    columns: [review_id, city, rating, comment, review_date]

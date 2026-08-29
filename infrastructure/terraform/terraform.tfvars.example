@@ -1,0 +1,5 @@
+environment               = "dev"
+aws_region                = "ap-southeast-2"
+landing_bucket_name       = "delivery-pipeline-landing-dev"
+snowflake_account_locator = "abcd-xy12345"
+snowflake_database_name   = "DELIVERY_DEV"

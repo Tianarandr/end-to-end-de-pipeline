@@ -1,0 +1,42 @@
+# Data contract: MARTS.FACT_ORDERS
+# Enforcement: dbt tests in dbt/delivery_pipeline/models/marts/_marts.yml (grep this model name).
+# This file is the human-readable promise; the dbt tests are what actually enforce it.
+
+dataset: MARTS.FACT_ORDERS
+owner: data-platform-team
+description: >
+  One row per order placed on the platform. The canonical source for order-level
+  revenue, cancellation, and delivery-time analysis. Feeds mart_daily_city_revenue,
+  mart_restaurant_performance, mart_delivery_sla, and SEMANTIC.SEM_ORDERS / SEM_REVENUE_DAILY.
+
+grain: One row per order_id.
+primary_key: order_id
+
+required_columns:
+  - order_id          # not null, unique (enforced)
+  - order_timestamp    # not null (enforced)
+  - customer_id         # not null, must exist in dim_customer (enforced via relationships test)
+  - restaurant_id        # not null, must exist in dim_restaurants (enforced via relationships test)
+  - order_status           # not null (enforced)
+  - sales_amount             # not null (enforced)
+
+allowed_values:
+  order_status: ["Delivered", "Cancelled", "Refunded"]   # enforced (accepted_values test)
+
+freshness_expectation:
+  description: >
+    fact_orders is rebuilt incrementally every DAG run (daily). A run is considered
+    stale if the max(order_timestamp) is more than 26 hours behind the run time.
+  source_freshness: "RAW.orders, warn_after: 24h, error_after: 48h (see _sources.yml)"
+
+quality_expectations:
+  - "unique + not_null on order_id"
+  - "relationships: customer_id -> dim_customer.customer_id"
+  - "relationships: restaurant_id -> dim_restaurants.restaurant_id"
+  - "accepted_values: order_status in ('Delivered','Cancelled','Refunded')"
+  - "sales_amount >= 0 (warn severity: flags bad source data without blocking the build)"
+
+breaking_change_policy: >
+  Any column rename/removal or grain change requires a new ADR and a version bump
+  communicated to downstream consumers (SEMANTIC views, text_to_sql/schema_registry.yml,
+  and any BI dashboards) before the change ships.

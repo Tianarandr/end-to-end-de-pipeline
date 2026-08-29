@@ -1,0 +1,16 @@
+# Installed directly into the Airflow image's own Python environment. This is
+# needed because PythonOperator tasks (bronze_validation, ai_quality_checks) run
+# in-process inside the scheduler/worker, so `from ingestion.validate import ...`
+# and `from ai.enrichment.quality_check import ...` must be importable there,
+# not just from a subprocess venv. Versions mirror the root requirements.txt,
+# so keep them in sync when bumping either file.
+snowflake-connector-python==4.7.2
+boto3==1.35.99
+openai==1.59.6
+tenacity==9.0.0
+sqlglot==26.3.1
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+PyYAML==6.0.2
+pandas==2.2.3

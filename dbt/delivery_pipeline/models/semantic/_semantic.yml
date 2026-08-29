@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: sem_orders
+    description: >
+      Order-grain semantic view, the AI/BI entry point for anything about
+      an individual order. Grain: one row per order_id. See ADR-005 and
+      dbt/delivery_pipeline/metrics/metrics.yml.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+
+  - name: sem_revenue_daily
+    description: >
+      Canonical daily revenue view. Grain: one row per (order_date, city).
+      Backs the `revenue`, `gross_merchandise_value`, `cancellation_rate`,
+      and `average_order_value` metrics in metrics.yml.
+    columns:
+      - name: order_date
+        tests: [not_null]
+
+  - name: sem_restaurant_performance
+    description: "Grain: one row per restaurant_id. Backs restaurant-level metrics in metrics.yml."
+    columns:
+      - name: restaurant_id
+        tests: [unique, not_null]
+
+  - name: sem_delivery_sla
+    description: "Grain: one row per (city, order_hour). Backs the `delivery_sla` metric family in metrics.yml."
+
+  - name: sem_reviews
+    description: >
+      Review content for retrieval (ai/rag/). Grain: one row per review_id.
+      Excludes customer_id on purpose; see model SQL comment.
+    columns:
+      - name: review_id
+        tests: [unique, not_null]

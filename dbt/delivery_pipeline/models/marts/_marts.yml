@@ -1,0 +1,115 @@
+version: 2
+
+models:
+  # ---------------------------------------------------------------- FACTS --
+  - name: fact_orders
+    description: >
+      Grain: one row per order. Primary key: order_id. Foreign keys:
+      customer_id -> dim_customer, restaurant_id -> dim_restaurants.
+      Key measures: sales_amount, discount, delivery_fee, gst,
+      delivery_time_min. Incremental (merge), watermarked on order_timestamp.
+      Owner: data-platform-team. See docs/data_contracts/fact_orders.yml.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_id
+      - name: restaurant_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_restaurants')
+                field: restaurant_id
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["Delivered", "Cancelled", "Refunded"]
+      - name: sales_amount
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+              config:
+                severity: warn
+
+  - name: fact_order_items
+    description: >
+      Grain: one row per order line item. Primary key: order_item_id.
+      Foreign keys: order_id -> fact_orders, restaurant_id -> dim_restaurants,
+      f_id -> dim_food. Key measures: price, quantity, line_amount.
+      Incremental (merge). Owner: data-platform-team.
+    columns:
+      - name: order_item_id
+        tests: [unique, not_null]
+      - name: order_id
+        tests: [not_null]
+
+  # ----------------------------------------------------------- DIMENSIONS --
+  - name: dim_customer
+    description: >
+      Grain: one row per customer. Primary key: customer_id.
+      Derives age_segment for cohort analysis. Owner: data-platform-team.
+      See docs/data_contracts/dim_customer.yml.
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: age_segment
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["Gen Z", "Millennial", "Gen X", "Boomer", "Unknown"]
+
+  - name: dim_restaurants
+    description: "Grain: one row per restaurant. Primary key: restaurant_id."
+    columns:
+      - name: restaurant_id
+        tests: [unique, not_null]
+
+  - name: dim_food
+    description: "Grain: one row per food item. Primary key: f_id."
+    columns:
+      - name: f_id
+        tests: [unique, not_null]
+
+  - name: dim_date
+    description: "Grain: one row per calendar day. Primary key: date_day. Generated date spine, 2024-01-01 to 2026-12-31."
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+
+  # -------------------------------------------------------------- MARTS --
+  - name: mart_daily_city_revenue
+    description: >
+      Grain: one row per (order_date, city). GMV, cancel rate, average
+      order value, all computed via macros/metrics.sql, never re-derived.
+      Owner: analytics-team.
+    columns:
+      - name: order_date
+        tests: [not_null]
+
+  - name: mart_restaurant_performance
+    description: >
+      Grain: one row per restaurant_id. Orders, revenue, average rating,
+      average delivery time, cancel rate. Owner: analytics-team.
+    columns:
+      - name: restaurant_id
+        tests: [not_null]
+
+  - name: mart_delivery_sla
+    description: >
+      Grain: one row per (city, order_hour), delivered orders only. p50/p90
+      delivery time and late-delivery rate against the
+      delivery_sla_threshold_minutes var. Owner: ops-team.
+
+  - name: mart_review_insights
+    description: >
+      Grain: one row per (city, topic, sentiment_label). Blends
+      STAGING.STG_REVIEWS with AI.REVIEW_ENRICHED. Tagged `ai`, built only
+      in the Airflow `publish` stage, after ai_enrichment has run. Owner:
+      ai-platform-team.

@@ -1,0 +1,31 @@
+# Data contract: MARTS.DIM_CUSTOMER
+
+dataset: MARTS.DIM_CUSTOMER
+owner: data-platform-team
+description: >
+  One row per customer. Slowly-changing attributes (age segment, income band) derived
+  from STAGING.STG_USERS. Consumed by fact_orders joins, customer analytics marts,
+  and SEMANTIC.SEM_ORDERS.
+
+grain: One row per customer_id.
+primary_key: customer_id
+
+required_columns:
+  - customer_id       # not null, unique (enforced)
+  - age_segment          # not null, derived, always populated ('Unknown' if age missing)
+
+allowed_values:
+  age_segment: ["Gen Z", "Millennial", "Gen X", "Boomer", "Unknown"]
+
+freshness_expectation:
+  description: "Rebuilt fully (table materialization) every DAG run from STAGING.STG_USERS."
+  source_freshness: "RAW.users, warn_after: 24h, error_after: 48h"
+
+quality_expectations:
+  - "unique + not_null on customer_id"
+  - "no PII beyond what STAGING already exposes (no raw password/email retained past staging where avoidable)"
+
+breaking_change_policy: >
+  age_segment bucket boundaries are business-defined; changing them requires
+  sign-off from the analytics team since dashboards on top of this column
+  will retroactively re-bucket historical customers.

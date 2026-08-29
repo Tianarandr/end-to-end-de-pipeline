@@ -1,0 +1,41 @@
+# Data contract: PUBLIC.PIPELINE_RUNS
+# The top-level observability record: one row per Airflow DAG run.
+# DDL: snowflake/03_control_tables.sql. Written by the `publish` task only,
+# once every upstream stage has reported its outcome.
+
+dataset: PUBLIC.PIPELINE_RUNS
+owner: data-platform-team
+description: >
+  One row per delivery_pipeline DAG run, summarizing outcome across every stage.
+  The primary answer to "did last night's pipeline succeed, and what happened."
+
+grain: One row per (run_id).
+primary_key: run_id
+
+required_columns:
+  - run_id            # UUID, matches ingestion/AI batch_id for the same DAG run
+  - dag_run_id            # Airflow's own run identifier, for cross-referencing the Airflow UI
+  - started_at
+  - finished_at
+  - status                        # SUCCESS | FAILED | PARTIAL
+  - rows_ingested
+  - dq_status                        # passed | warned | failed
+  - ai_success_count
+  - ai_fail_count
+
+allowed_values:
+  status: ["SUCCESS", "FAILED", "PARTIAL"]
+  dq_status: ["passed", "warned", "failed"]
+
+freshness_expectation:
+  description: "Exactly one row written per DAG run, at the end of the `publish` task."
+
+quality_expectations:
+  - "unique + not_null on run_id"
+  - "finished_at >= started_at"
+  - "a row with status=FAILED must have a non-null note in the corresponding Airflow task logs (not duplicated here; this table is the index, not the detail)"
+
+breaking_change_policy: >
+  This table is the audit trail referenced by docs/architecture/06-observability.md;
+  columns are additive-only; never remove a column consumers may already be
+  querying for historical run analysis.

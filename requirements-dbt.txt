@@ -1,0 +1,5 @@
+# Isolated dbt dependency set, installed into its own venv (docker/airflow/Dockerfile,
+# /opt/airflow/.dbt_venv) so dbt's pinned transitive deps (Jinja2, click, etc.)
+# don't collide with Airflow's own. See ADR-002 and airflow/dags/delivery_pipeline_dag.py.
+dbt-core==1.12.3
+dbt-snowflake==1.12.0

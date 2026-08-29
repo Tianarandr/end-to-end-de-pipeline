@@ -1,0 +1,12 @@
+[sqlfluff]
+templater = dbt
+dialect = snowflake
+exclude_rules = L034, AM04
+
+[sqlfluff:templater:dbt]
+project_dir = dbt/delivery_pipeline
+profiles_dir = dbt/delivery_pipeline/profiles
+target = ci
+
+[sqlfluff:indentation]
+tab_space_size = 4

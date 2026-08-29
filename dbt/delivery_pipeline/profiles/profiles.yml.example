@@ -1,0 +1,54 @@
+# Copy to dbt/delivery_pipeline/profiles/profiles.yml (gitignored) for local dev,
+# or point --profiles-dir at a directory holding this file in CI/Airflow.
+# Values are read from environment variables — no credentials committed.
+# See docs/architecture/05-security.md and .env.example.
+
+delivery_pipeline:
+  target: "{{ env_var('ENVIRONMENT', 'dev') }}"
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_TRANSFORM_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_TRANSFORM_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_TRANSFORM_ROLE', 'TRANSFORM_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DELIVERY_WH') }}"
+      database: "DELIVERY_DEV"
+      schema: "STAGING"     # generate_schema_name.sql lets each model set its own layer schema
+      threads: 4
+
+    staging:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_TRANSFORM_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_TRANSFORM_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_TRANSFORM_ROLE', 'TRANSFORM_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DELIVERY_WH') }}"
+      database: "DELIVERY_STAGING"
+      schema: "STAGING"
+      threads: 4
+
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_TRANSFORM_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_TRANSFORM_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_TRANSFORM_ROLE', 'TRANSFORM_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'DELIVERY_WH') }}"
+      database: "DELIVERY_PROD"
+      schema: "STAGING"
+      threads: 8
+
+    ci:
+      # Used by CI only (.github/workflows/ci.yml), with dummy values, so
+      # `dbt parse`/`dbt compile` can build a manifest without a live
+      # warehouse. No target actually queries Snowflake under this target.
+      type: snowflake
+      account: "ci-placeholder"
+      user: "ci-placeholder"
+      password: "ci-placeholder"
+      role: "TRANSFORM_ROLE"
+      warehouse: "DELIVERY_WH"
+      database: "DELIVERY_CI"
+      schema: "STAGING"
+      threads: 1

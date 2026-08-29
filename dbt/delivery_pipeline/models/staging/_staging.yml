@@ -1,0 +1,106 @@
+version: 2
+
+models:
+  - name: stg_restaurants
+    description: >
+      One deduplicated, typed row per restaurant. Owner: data-platform-team.
+      Grain: one row per restaurant_id.
+    columns:
+      - name: restaurant_id
+        description: Primary key. Source `id`, cast to NUMBER.
+        tests: [unique, not_null]
+      - name: restaurant_name
+        description: Restaurant display name.
+      - name: city
+        description: Parsed out of the source's free-text address field.
+      - name: rating
+        description: Average star rating, 0-5. Null if the source had '--'.
+      - name: cost_for_two
+        description: Approximate cost for two, in local currency, parsed from a messy source string.
+
+  - name: stg_users
+    description: >
+      One deduplicated, typed row per customer. Owner: data-platform-team.
+      Grain: one row per customer_id.
+    columns:
+      - name: customer_id
+        description: Primary key. Source `user_id`, cast to NUMBER.
+        tests: [unique, not_null]
+      - name: customer_age
+        description: Self-reported age. Null where the source value wasn't numeric.
+
+  - name: stg_food
+    description: One deduplicated row per food item. Grain is one row per f_id.
+    columns:
+      - name: f_id
+        tests: [unique, not_null]
+
+  - name: stg_menu
+    description: >
+      Restaurant x food x price combinations, filtered to valid restaurant
+      ids and positive prices. Grain: one row per menu_id.
+    columns:
+      - name: menu_id
+        tests: [unique, not_null]
+      - name: restaurant_id
+        tests: [not_null]
+
+  - name: stg_orders
+    description: >
+      One deduplicated, fully-typed row per order. The first layer safe to
+      build revenue/SLA logic on top of. Owner: data-platform-team.
+      Grain: one row per order_id.
+    columns:
+      - name: order_id
+        description: Primary key.
+        tests: [unique, not_null]
+      - name: customer_id
+        description: Foreign key to stg_users / dim_customer.
+        tests: [not_null]
+      - name: restaurant_id
+        description: Foreign key to stg_restaurants / dim_restaurants.
+        tests: [not_null]
+      - name: order_status
+        description: Raw order status string from the source.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["Delivered", "Cancelled", "Refunded"]
+      - name: is_delivered
+        description: "Derived from order_status = 'Delivered'. Staging owns this one because it only depends on this row, nothing else."
+      - name: sales_amount
+        description: Gross amount charged for the order, before delivery-status filtering.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+              config:
+                severity: warn   # negative sales_amount is suspicious source data, worth flagging but not worth blocking the build over (see 07-data-quality.md)
+
+  - name: stg_order_items
+    description: One row per order line item. Grain is one row per order_item_id.
+    columns:
+      - name: order_item_id
+        tests: [unique, not_null]
+      - name: order_id
+        tests: [not_null]
+
+  - name: stg_reviews
+    description: >
+      One deduplicated row per review with a non-null comment. Owner:
+      data-platform-team. First input to the AI layer. See
+      docs/data_contracts/stg_reviews.yml and
+      docs/architecture/04-ai-architecture.md.
+      Grain: one row per review_id.
+    columns:
+      - name: review_id
+        description: Primary key. Enrichment idempotency (AI.ENRICHMENT_LOG) depends on this being stable across reloads.
+        tests: [unique, not_null]
+      - name: comment
+        description: Free-text review body. Never null, filtered at this layer.
+        tests: [not_null]
+      - name: rating
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "between 1 and 5"
+              config:
+                severity: warn

@@ -1,0 +1,32 @@
+# Data contract: STAGING.STG_REVIEWS
+
+dataset: STAGING.STG_REVIEWS
+owner: data-platform-team
+description: >
+  One row per customer review with a non-null comment. First AI consumer input:
+  feeds both ai/enrichment (writer) and, via SEMANTIC.SEM_REVIEWS, ai/rag (reader).
+
+grain: One row per review_id.
+primary_key: review_id
+
+required_columns:
+  - review_id      # not null, unique (enforced)
+  - comment           # not null (filtered at staging: WHERE comment IS NOT NULL)
+  - rating              # numeric, expected 1-5
+
+freshness_expectation:
+  description: "Rebuilt (view) on every dbt_staging run, reflecting the latest RAW.reviews load."
+  source_freshness: "RAW.reviews, warn_after: 24h, error_after: 48h"
+
+quality_expectations:
+  - "unique + not_null on review_id"
+  - "comment is never null (filtered at the source)"
+  - "rating between 1 and 5 (warn severity)"
+
+ai_consumers:
+  - "ai/enrichment reads STG_REVIEWS via AI_ENRICH_ROLE (SELECT only) and writes AI.REVIEW_ENRICHED"
+  - "ai/rag reads SEMANTIC.SEM_REVIEWS (not this table directly) via AI_READONLY_ROLE"
+
+breaking_change_policy: >
+  review_id must remain stable across reloads; enrichment idempotency
+  (AI.ENRICHMENT_LOG keyed on review_id) depends on it.

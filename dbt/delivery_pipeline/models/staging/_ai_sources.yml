@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: ai
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'DELIVERY_DEV') }}"
+    schema: AI
+    description: >
+      AI-written outputs. TRANSFORM_ROLE has SELECT (only) on
+      AI.REVIEW_ENRICHED so ai-tagged marts can join it. See
+      docs/architecture/05-security.md.
+    tables:
+      - name: review_enriched
+        description: >
+          One row per successfully enriched review, written by
+          ai/enrichment/. See docs/data_contracts/review_enriched.yml.
+        columns:
+          - name: review_id
+            tests: [not_null, unique]
+          - name: sentiment_label
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ["positive", "neutral", "negative"]
