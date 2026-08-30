@@ -5,3 +5,4 @@ sqlfluff-templater-dbt==3.3.0
 pytest==8.3.4
 pytest-mock==3.14.0
 moto==5.0.28
+httpx==0.28.1

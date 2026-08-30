@@ -23,6 +23,7 @@ from ai.common.llm_client import get_client
 from ai.common.logging_utils import get_logger, log_event
 from ai.common.snowflake_client import get_ai_enrich_connection
 from ai.enrichment.client import ClassificationError, classify_review
+from ai.enrichment.pii import scrub_pii
 from ai.enrichment.prompts.review_classification_v1 import PROMPT_VERSION
 from ai.enrichment.repository import get_attempt_number, get_reviews_to_process, log_attempt, write_success
 
@@ -59,11 +60,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     succeeded, failed = 0, 0
+    total_pii_redacted = 0
     for review_id, comment in reviews:
         attempt_number = get_attempt_number(cursor, review_id)
+        # Scrub before the comment ever reaches the LLM provider, not after
+        # classification: an email/phone/card number in a review has no
+        # bearing on sentiment/topic, so removing it costs nothing in
+        # classification quality. See ai/enrichment/pii.py.
+        scrubbed_comment, pii_redacted_count = scrub_pii(comment)
+        total_pii_redacted += pii_redacted_count
         try:
             classification, model_version = classify_review(
-                llm, settings.ai_chat_model, comment, settings.ai_enrichment_max_retries
+                llm, settings.ai_chat_model, scrubbed_comment, settings.ai_enrichment_max_retries
             )
             write_success(
                 cursor,
@@ -73,19 +81,20 @@ def main(argv: list[str] | None = None) -> int:
                 model_version=model_version,
                 prompt_version=PROMPT_VERSION,
                 batch_id=batch_id,
+                pii_redacted_count=pii_redacted_count,
             )
             log_attempt(
                 cursor, batch_id=batch_id, review_id=review_id, attempt_number=attempt_number,
                 status="SUCCEEDED", error_message=None, model_name=settings.ai_chat_model,
-                model_version=model_version, prompt_version=PROMPT_VERSION,
+                model_version=model_version, prompt_version=PROMPT_VERSION, pii_redacted_count=pii_redacted_count,
             )
             succeeded += 1
-            log_event(logger, "enrichment_review_succeeded", batch_id=batch_id, review_id=review_id)
+            log_event(logger, "enrichment_review_succeeded", batch_id=batch_id, review_id=review_id, pii_redacted_count=pii_redacted_count)
         except (ClassificationError, Exception) as exc:  # noqa: BLE001 - every failure gets logged, not swallowed
             log_attempt(
                 cursor, batch_id=batch_id, review_id=review_id, attempt_number=attempt_number,
                 status="FAILED", error_message=str(exc)[:2000], model_name=settings.ai_chat_model,
-                model_version=None, prompt_version=PROMPT_VERSION,
+                model_version=None, prompt_version=PROMPT_VERSION, pii_redacted_count=pii_redacted_count,
             )
             failed += 1
             log_event(logger, "enrichment_review_failed", level=40, batch_id=batch_id, review_id=review_id, error=str(exc))
@@ -99,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     log_event(
         logger, "enrichment_batch_finished", batch_id=batch_id,
         succeeded=succeeded, failed=failed, failure_rate=round(failure_rate, 3),
+        pii_redacted_count=total_pii_redacted,
     )
 
     return 0  # per-review failures are logged, not raised (see module docstring)

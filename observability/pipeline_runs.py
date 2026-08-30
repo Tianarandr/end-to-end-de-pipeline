@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from ingestion.config import load_settings
 from ingestion.snowflake_client import get_loader_connection
+from observability.alerting import send_alert
 
 
 def record_pipeline_run(
@@ -78,4 +79,11 @@ def record_failure_from_context(context: dict) -> None:
         dq_status="failed",
         ai_success_count=0,
         ai_fail_count=0,
+    )
+
+    send_alert(
+        subject=f"delivery_pipeline run {dag_run.run_id} failed",
+        message=f"Task '{ti.task_id}' failed. See Airflow logs and PUBLIC.PIPELINE_RUNS for detail.",
+        severity="critical",
+        context={"dag_run_id": dag_run.run_id, "task_id": ti.task_id},
     )

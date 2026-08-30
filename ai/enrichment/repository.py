@@ -40,12 +40,12 @@ def get_attempt_number(cursor, review_id: str) -> int:
 
 def log_attempt(cursor, *, batch_id: str, review_id: str, attempt_number: int, status: str,
                  error_message: str | None, model_name: str | None, model_version: str | None,
-                 prompt_version: str | None) -> None:
+                 prompt_version: str | None, pii_redacted_count: int = 0) -> None:
     cursor.execute(
         """
         INSERT INTO AI.ENRICHMENT_LOG
-            (batch_id, review_id, attempt_number, status, error_message, model_name, model_version, prompt_version, processed_at)
-        VALUES (%(batch_id)s, %(review_id)s, %(attempt_number)s, %(status)s, %(error_message)s, %(model_name)s, %(model_version)s, %(prompt_version)s, %(processed_at)s)
+            (batch_id, review_id, attempt_number, status, error_message, model_name, model_version, prompt_version, pii_redacted_count, processed_at)
+        VALUES (%(batch_id)s, %(review_id)s, %(attempt_number)s, %(status)s, %(error_message)s, %(model_name)s, %(model_version)s, %(prompt_version)s, %(pii_redacted_count)s, %(processed_at)s)
         """,
         {
             "batch_id": batch_id,
@@ -56,18 +56,19 @@ def log_attempt(cursor, *, batch_id: str, review_id: str, attempt_number: int, s
             "model_name": model_name,
             "model_version": model_version,
             "prompt_version": prompt_version,
+            "pii_redacted_count": pii_redacted_count,
             "processed_at": datetime.now(UTC),
         },
     )
 
 
 def write_success(cursor, *, review_id: str, classification, model_name: str, model_version: str,
-                   prompt_version: str, batch_id: str) -> None:
+                   prompt_version: str, batch_id: str, pii_redacted_count: int = 0) -> None:
     cursor.execute(
         """
         INSERT INTO AI.REVIEW_ENRICHED
-            (review_id, sentiment_label, sentiment_score, topic, key_issue, model_name, model_version, prompt_version, batch_id, processed_at)
-        VALUES (%(review_id)s, %(sentiment_label)s, %(sentiment_score)s, %(topic)s, %(key_issue)s, %(model_name)s, %(model_version)s, %(prompt_version)s, %(batch_id)s, %(processed_at)s)
+            (review_id, sentiment_label, sentiment_score, topic, key_issue, model_name, model_version, prompt_version, batch_id, pii_redacted_count, processed_at)
+        VALUES (%(review_id)s, %(sentiment_label)s, %(sentiment_score)s, %(topic)s, %(key_issue)s, %(model_name)s, %(model_version)s, %(prompt_version)s, %(batch_id)s, %(pii_redacted_count)s, %(processed_at)s)
         """,
         {
             "review_id": review_id,
@@ -79,6 +80,7 @@ def write_success(cursor, *, review_id: str, classification, model_name: str, mo
             "model_version": model_version,
             "prompt_version": prompt_version,
             "batch_id": batch_id,
+            "pii_redacted_count": pii_redacted_count,
             "processed_at": datetime.now(UTC),
         },
     )

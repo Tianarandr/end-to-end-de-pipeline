@@ -19,6 +19,7 @@ from ingestion.logging_utils import get_logger, log_event
 from ingestion.models import LoadStatus
 from ingestion.snowflake_client import get_loader_connection
 from ingestion.sources.s3_csv import S3CsvSource
+from observability.lineage import emit_source_load
 
 logger = get_logger(__name__)
 
@@ -43,10 +44,23 @@ def main(argv: list[str] | None = None) -> int:
     for name in source_names:
         source = S3CsvSource(name=name, bucket=settings.s3_landing_bucket, region=settings.aws_region)
         results = loader.load_source(source, run_id)
+        source_rows = 0
+        source_failed = False
         for r in results:
             total_rows += r.row_count
+            source_rows += r.row_count
             if r.status == LoadStatus.FAILED:
                 any_failed = True
+                source_failed = True
+
+        emit_source_load(
+            run_id=run_id,
+            source=name,
+            s3_keys=[r.file_ref.key for r in results],
+            raw_table=f"RAW.{name}",
+            state="FAIL" if source_failed else "COMPLETE",
+            row_count=source_rows,
+        )
 
     connection.close()
     log_event(

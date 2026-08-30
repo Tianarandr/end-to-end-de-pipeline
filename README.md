@@ -134,7 +134,7 @@ trigger for revisiting that.
 
 ## 7. AI architecture
 
-Four separated concerns
+Separated concerns
 ([docs/architecture/04-ai-architecture.md](docs/architecture/04-ai-architecture.md)):
 
 - **A. Batch enrichment** (`ai/enrichment/`): idempotent, batched, retried,
@@ -142,6 +142,8 @@ Four separated concerns
   success and failure alike, is logged with `model_name`/`model_version`/
   `prompt_version` to `AI.ENRICHMENT_LOG`, so failures stay visible and
   reprocessable (`--reprocess-failed`) instead of getting silently dropped.
+  Comments are scrubbed of emails/phone numbers/card numbers (`pii.py`)
+  before they ever reach the LLM provider.
 - **B. RAG** (`ai/rag/`): split into `prepare → chunk → embed → store →
   retrieve → generate`, each stage independently swappable. No vector
   database here; a content-hash-cached Parquet embedding matrix is enough
@@ -153,6 +155,10 @@ Four separated concerns
   for a need this project doesn't have yet. The architecture is ready for
   it though: an agent would compose `ai/text_to_sql` and `ai/rag` as tools
   over the same `SEMANTIC` surface, with no new data-access pattern needed.
+- **E. Metrics API** (`ai/metrics_api/`): a thin read-only FastAPI service
+  over the same `metrics.yml` dictionary, for callers that want a metric
+  value without a chat UI. Same `AI_READONLY_ROLE` connection as B/C, not a
+  new access path.
 
 **Every one of these reads `SEMANTIC` only** (the enrichment writer reads
 `STAGING` and writes only to `AI`). See [ADR-006](docs/decisions/ADR-006-ai-above-governed-data.md).
@@ -181,7 +187,8 @@ Text-to-SQL guardrails are defense in depth, not a single check
    instead of inventing its own.
 2. **Static AST validation** (`sqlglot`, not a keyword blocklist): single
    statement, `SELECT`/`WITH` only, every table on the `SEMANTIC` allowlist,
-   `LIMIT` enforced and clamped. 34 unit tests in `tests/python/` cover this.
+   `LIMIT` enforced and clamped. 53 unit tests in `tests/python/` cover this
+   and the rest of the Python layer.
 3. **The real enforcement**: execution under `AI_READONLY_ROLE`,
    `SELECT`-only on `SEMANTIC`, no write privilege anywhere, with a session
    query timeout. A validator bug can produce a confusing error, but it
@@ -194,8 +201,12 @@ Text-to-SQL guardrails are defense in depth, not a single check
   grain, PK, required columns, allowed values, and freshness/quality
   expectations for each important dataset. The dbt tests are the
   enforcement; the contract is the human-readable promise.
-- **Lineage**: dbt's `ref()`/`source()` graph is the lineage tool, no
-  separate lineage product needed ([ADR-002](docs/decisions/ADR-002-dbt.md)).
+- **Lineage**: dbt's `ref()`/`source()` graph is the lineage tool for
+  `STAGING` through `SEMANTIC`/`AI`, no separate lineage product needed
+  ([ADR-002](docs/decisions/ADR-002-dbt.md)). When `OPENLINEAGE_URL` is
+  set, that graph and the one hop it doesn't cover (S3 → `RAW`) both emit
+  standard OpenLineage events (`dbt-ol`, `observability/lineage.py`) for
+  whatever backend is listening; none is deployed by this repo.
 - **ADRs** ([docs/decisions/](docs/decisions/)): the record of why, not
   just what.
 
@@ -206,7 +217,11 @@ long, did quality pass, how many AI records failed" without log-scraping
 ([docs/architecture/06-observability.md](docs/architecture/06-observability.md)):
 `INGESTION_RUNS`, `AI.ENRICHMENT_LOG`, `PUBLIC.PIPELINE_RUNS`. The Airflow
 DAG's `TaskGroup`s mirror the pipeline's logical stages, so the graph view
-is effectively the architecture diagram.
+is effectively the architecture diagram. A DAG failure or an AI
+quality-check breach also calls `observability/alerting.py`, which pushes
+to Slack/email if either is configured (both optional, blank by default);
+either way the control-table row is written, alerting just decides whether
+anything also pages a human.
 
 ## 12. Security
 
@@ -327,16 +342,17 @@ that.
 │   └── metrics/metrics.yml        Canonical metric dictionary
 ├── ai/
 │   ├── common/              Shared LLM client, role-scoped Snowflake connections, config
-│   ├── enrichment/           Batch AI enrichment (writer)
+│   ├── enrichment/           Batch AI enrichment (writer) + PII scrubbing
 │   ├── rag/                   Retrieval-augmented generation (reader)
 │   ├── text_to_sql/            Guardrailed natural-language analytics (reader)
-│   └── apps/                    Streamlit UIs
+│   ├── metrics_api/              Read-only FastAPI metrics service (reader)
+│   └── apps/                       Streamlit UIs
 ├── airflow/dags/            The orchestration DAG (thin, calls into the packages above)
-├── observability/           PIPELINE_RUNS control-table writer
+├── observability/           PIPELINE_RUNS control-table writer, alerting, lineage emission
 ├── snowflake/               One-time setup SQL (warehouse, roles, Bronze DDL, control tables)
 ├── infrastructure/terraform/  S3 + IAM + Snowflake warehouse/db/schemas/roles
 ├── docker/airflow/          Dockerfile + docker-compose for local Airflow
-├── tests/python/            Unit tests (34, no live credentials needed)
+├── tests/python/            Unit tests (53, no live credentials needed)
 ├── docs/
 │   ├── architecture/          01-07: overview, data flow, data model, AI, security, observability, data quality
 │   ├── decisions/               ADR-001..007
@@ -357,7 +373,7 @@ that.
 | RAG: one file, hardcoded Parquet, no swap path | `ai/rag/`: 6 single-purpose stages behind a `VectorStore` protocol | §7 |
 | Text-to-SQL: string blocklist, broad DB role, referenced columns that didn't exist in the marts | AST guardrails + `AI_READONLY_ROLE` (SELECT-only, SEMANTIC-only) + fixed the missing `cancel_rate`/`late_rate` columns | §9 |
 | One flat 4-task DAG | 9 `TaskGroup`s matching logical stages, explicit quality gates | §11, [ADR-003](docs/decisions/ADR-003-airflow.md) |
-| No tests, no CI, no IaC, no ADRs | 34 unit tests + dbt tests, GitHub Actions CI, Terraform for cloud infra, 7 ADRs | §13, §14, §16 |
+| No tests, no CI, no IaC, no ADRs | 53 unit tests + dbt tests, GitHub Actions CI, Terraform for cloud infra, 7 ADRs | §13, §14, §16 |
 
 ## Skills demonstrated
 

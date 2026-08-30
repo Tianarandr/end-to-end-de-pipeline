@@ -1,0 +1,10 @@
+# ai/metrics_api/ only. Kept out of requirements.txt on purpose: that file
+# is also installed alongside Airflow itself (the airflow-dag-import CI job,
+# docker/airflow/requirements-airflow-app.txt) to make PythonOperator tasks
+# importable, and Airflow 3.0.3 pins its own internal fastapi version.
+# Installing this file into the same environment as Airflow would downgrade
+# it and break Airflow's own API app. Same isolation reasoning as
+# requirements-dbt.txt.
+
+fastapi==0.115.6
+uvicorn==0.34.0

@@ -18,6 +18,7 @@ downstream tasks are never reached. See docs/architecture/07-data-quality.md.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from ai.enrichment.quality_check import check_batch_quality
@@ -33,7 +34,13 @@ PROJECT_ROOT = "/opt/airflow/project"
 # kept OUTSIDE the bind-mounted project directory: anything built under
 # PROJECT_ROOT at image-build time would get shadowed the moment the host repo
 # is mounted over it at container start.
-DBT = "/opt/airflow/.dbt_venv/bin/dbt"
+#
+# When OPENLINEAGE_URL is set, dbt is invoked through `dbt-ol` (openlineage-dbt,
+# installed into the same venv by requirements-dbt.txt) instead of `dbt` directly:
+# a drop-in wrapper that runs the same command and additionally parses the run
+# result + manifest into OpenLineage events. No DAG logic changes either way; see
+# docs/architecture/06-observability.md#lineage.
+DBT = "/opt/airflow/.dbt_venv/bin/dbt-ol" if os.environ.get("OPENLINEAGE_URL") else "/opt/airflow/.dbt_venv/bin/dbt"
 DBT_PROJECT_DIR = f"{PROJECT_ROOT}/dbt/delivery_pipeline"
 DBT_PROFILES_DIR = f"{PROJECT_ROOT}/dbt/delivery_pipeline/profiles"
 DBT_FLAGS = f"--project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROFILES_DIR}"

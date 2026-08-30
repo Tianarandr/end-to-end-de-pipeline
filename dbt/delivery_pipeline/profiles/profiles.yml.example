@@ -1,6 +1,6 @@
 # Copy to dbt/delivery_pipeline/profiles/profiles.yml (gitignored) for local dev,
 # or point --profiles-dir at a directory holding this file in CI/Airflow.
-# Values are read from environment variables — no credentials committed.
+# Values are read from environment variables, no credentials committed.
 # See docs/architecture/05-security.md and .env.example.
 
 delivery_pipeline:
