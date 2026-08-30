@@ -51,30 +51,83 @@ A food-delivery platform needs:
 
 ## 3. Architecture diagram
 
-```
-                    DATA SOURCES
-                         │
-                         ▼
-                INGESTION / LANDING        immutable S3 landing · INGESTION_RUNS control table · idempotent COPY INTO
-                         │
-                         ▼
-                  BRONZE / RAW              verbatim source shape + _ingested_at/_source_file/_batch_id/_record_hash
-                         │
-                         ▼
-                 SILVER / STAGING          typed · deduplicated · standardized (dbt views)
-                         │
-                         ▼
-              GOLD / BUSINESS DATA        star schema + marts, business logic in one place (dbt macros)
-                         │
-                         ▼
-                  SEMANTIC LAYER          curated, documented, metric-named views + metrics.yml
-                    /          \
-                   ▼            ▼
-             AI / ML         BI / Analytics
-                │
-                ▼
-          AI APPLICATIONS
-     RAG · Text-to-SQL · (future agents)
+```mermaid
+flowchart TB
+    subgraph ORCH["Airflow: DAGs orchestrating (schedule: daily, catchup=false)"]
+        direction LR
+        O1["1 . ingestion"] --> O2["2 . dbt build<br/>Bronze to Silver to Gold"] --> O3["3 . AI enrichment"] --> O4["4 . publish / refresh apps"]
+    end
+
+    subgraph SRC["Data sources"]
+        direction TB
+        S1["CSV files"]
+        S2["APIs (future)"]
+        S3["DB extracts / CDC (future)"]
+    end
+
+    LAND["Ingestion / landing<br/>S3 raw landing zone<br/>run_id, batch_id, timestamp, load status<br/>idempotent, deduplicated"]
+
+    subgraph SNOW["Snowflake data platform"]
+        direction LR
+        BRONZE["Bronze / RAW<br/>verbatim from S3<br/>plus _ingested_at, _source_file,<br/>_batch_id, _record_hash<br/>no business logic"]
+        SILVER["Silver / STAGING<br/>dbt staging models<br/>type casting, dedup, standardize<br/>tests: not_null, unique, relationships"]
+        GOLD["Gold / MARTS<br/>star schema<br/>facts: orders, order_items<br/>dims: customer, restaurant, food, date"]
+        SEM["Semantic layer<br/>single source of truth<br/>metrics.yml: GMV, AOV, cancel rate, SLA<br/>curated views only, no raw or bronze access"]
+        BRONZE --> SILVER --> GOLD --> SEM
+    end
+
+    subgraph AI["AI / ML layer, governed access only"]
+        direction TB
+        AIENR["Batch AI enrichment<br/>sentiment, topic, PII scrub<br/>idempotent, retried, versioned"]
+        T2SQL["Text-to-SQL guardrails<br/>SELECT-only, allowlisted views<br/>row and timeout limits"]
+        RAG["RAG pipeline<br/>prepare, chunk, embed, store,<br/>retrieve, generate<br/>pluggable VectorStore"]
+        AGENTS["Agents, future slot<br/>tool registry over the same<br/>guardrailed metric and retrieval APIs"]
+    end
+
+    subgraph APPS["Applications"]
+        direction TB
+        BI["BI / analytics dashboards<br/>reads semantic views, not marts"]
+        STL["Streamlit AI<br/>NL analytics + review Q and A (RAG)"]
+        MAPI["Metrics API, read-only<br/>same definition everywhere"]
+    end
+
+    subgraph FLOOR["Monitoring / compute / data quality and governance"]
+        direction LR
+        MON["Monitoring and observability<br/>Airflow logs, Snowflake query history<br/>dbt docs and tests, alerts (email / Slack)"]
+        COMP["Compute<br/>Snowflake warehouse (ETL and transformations)"]
+        DQ["Data quality and governance<br/>dbt tests, data contracts, lineage (OpenLineage)"]
+    end
+
+    S1 --> LAND
+    S2 --> LAND
+    S3 --> LAND
+    LAND --> BRONZE
+    SEM --> AIENR
+    SEM --> T2SQL
+    SEM --> RAG
+    SEM --> BI
+    AIENR --> STL
+    RAG --> STL
+    T2SQL --> MAPI
+    ORCH -.-> LAND
+    ORCH -.-> SNOW
+    ORCH -.-> AI
+    ORCH -.-> APPS
+    SNOW -.-> DQ
+    SNOW -.-> MON
+
+    classDef orch fill:#d9f2d9,stroke:#4CAF50,color:#000;
+    classDef land fill:#ffe8cc,stroke:#e69138,color:#000;
+    classDef snow fill:#cfe2f3,stroke:#3d85c6,color:#000;
+    classDef ai fill:#cfe2f3,stroke:#3d85c6,color:#000;
+    classDef apps fill:#ffe8cc,stroke:#e69138,color:#000;
+    classDef floor fill:#f9d5d3,stroke:#cc4125,color:#000;
+    class ORCH orch
+    class LAND land
+    class SNOW snow
+    class AI ai
+    class APPS apps
+    class FLOOR floor
 ```
 
 Cross-cutting, applied at every layer: **Security · Governance · Data
