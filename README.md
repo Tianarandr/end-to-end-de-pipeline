@@ -1,6 +1,6 @@
 # Food Delivery Data + AI Platform: An Architecture Case Study
 
-<img width="1788" height="1027" alt="architecture-data-ia-2026-" src="https://github.com/user-attachments/assets/ba7003d2-12a3-46e1-9412-ee88f8381250" />
+<img width="1788" height="1027" alt="architecture-data-ia-2026-" src="https://github.com/user-attachments/assets/76273d20-a118-4a8d-8d79-946aa6be2728" />
 
 A reference implementation of a modern data platform for a food-delivery
 marketplace: governed ingestion, a medallion warehouse, a semantic layer,
