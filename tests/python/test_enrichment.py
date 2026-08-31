@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
+from ai.enrichment.pii import scrub_pii
 from ai.enrichment.repository import get_reviews_to_process, log_attempt, write_success
 from ai.enrichment.schema import ReviewClassification
 
@@ -90,3 +91,36 @@ def test_write_success_persists_all_traceability_fields():
     params = cursor.execute.call_args[0][1]
     for field in ("model_name", "model_version", "prompt_version", "batch_id", "processed_at"):
         assert params[field] is not None
+
+
+def test_scrub_pii_redacts_email():
+    scrubbed, count = scrub_pii("contact me at jane.doe@example.com about my order")
+    assert "example.com" not in scrubbed
+    assert "[REDACTED_EMAIL]" in scrubbed
+    assert count == 1
+
+
+def test_scrub_pii_redacts_credit_card():
+    scrubbed, count = scrub_pii("charge failed on card 4111 1111 1111 1111 please retry")
+    assert "4111" not in scrubbed
+    assert "[REDACTED_CARD]" in scrubbed
+    assert count == 1
+
+
+def test_scrub_pii_redacts_phone_number():
+    scrubbed, count = scrub_pii("call me back on 0412 345 678 tomorrow")
+    assert "[REDACTED_PHONE]" in scrubbed
+    assert count == 1
+
+
+def test_scrub_pii_leaves_ordinary_review_text_untouched():
+    text = "food was cold and delivery took forever, very disappointed"
+    scrubbed, count = scrub_pii(text)
+    assert scrubbed == text
+    assert count == 0
+
+
+def test_scrub_pii_handles_empty_string():
+    scrubbed, count = scrub_pii("")
+    assert scrubbed == ""
+    assert count == 0

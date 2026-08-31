@@ -14,6 +14,7 @@ import sys
 from ai.common.config import load_settings
 from ai.common.logging_utils import get_logger, log_event
 from ai.common.snowflake_client import get_ai_enrich_connection
+from observability.alerting import send_alert
 
 logger = get_logger(__name__)
 
@@ -68,6 +69,12 @@ def main(argv: list[str] | None = None) -> int:
         check_batch_quality(args.batch_id)
     except QualityCheckFailed as exc:
         log_event(logger, "ai_quality_check_failed", level=40, error=str(exc))
+        send_alert(
+            subject=f"AI enrichment batch {args.batch_id} failed quality check",
+            message=str(exc),
+            severity="critical",
+            context={"batch_id": args.batch_id},
+        )
         print(str(exc), file=sys.stderr)
         return 1
     return 0

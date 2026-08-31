@@ -1,6 +1,6 @@
 # Airflow 3.x + Snowflake/FAB providers + the ingestion/ai layer's runtime deps
 # (installed directly, for PythonOperator tasks) + dbt in its own isolated venv
-# (for BashOperator tasks — see ADR-002 and airflow/dags/delivery_pipeline_dag.py).
+# (for BashOperator tasks, see ADR-002 and airflow/dags/delivery_pipeline_dag.py).
 FROM apache/airflow:3.0.3
 
 COPY docker/airflow/requirements-airflow-app.txt /tmp/requirements-airflow-app.txt

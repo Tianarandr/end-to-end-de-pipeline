@@ -8,8 +8,8 @@ write outside the `AI` schema. See
 [ADR-006](../decisions/ADR-006-ai-above-governed-data.md) for why, and
 [05-security.md](05-security.md) for the role grants that enforce it.
 
-The AI layer is split into four clearly separated concerns, matching
-`ai/`'s subpackages:
+The AI layer is split into clearly separated concerns, matching `ai/`'s
+subpackages:
 
 ```
 ai/
@@ -17,7 +17,8 @@ ai/
 ├── enrichment/        # A. Batch AI enrichment (writer)
 ├── rag/                # B. Retrieval / RAG (reader)
 ├── text_to_sql/         # C. Natural-language analytics (reader)
-└── apps/                 # Streamlit UIs composing B and C
+├── metrics_api/          # E. Metrics API (reader)
+└── apps/                   # Streamlit UIs composing B and C
 ```
 
 *(D. Future AI agents: see [Future agents](#d-future-ai-agents-not-built) below.)*
@@ -42,6 +43,14 @@ Classifies review sentiment/topic/key-issue with an LLM. Redesigned from a
   are stored on every row, in both the success table (`REVIEW_ENRICHED`)
   and the attempt log (`ENRICHMENT_LOG`). Bumping the prompt is a new
   `prompt_version`, not a silent behavior change.
+- **PII scrubbing before the LLM call.** `pii.py` regex-redacts emails,
+  phone numbers, and credit-card-like sequences out of the comment before
+  it's sent to the model, not after (see
+  [ADR-006](../decisions/ADR-006-ai-above-governed-data.md)). The redaction
+  count is stored on every row (`pii_redacted_count`) so a spike is visible
+  without re-reading raw comments. It's regex-based, not an NER model: this
+  catches the clear, high-confidence cases (an email or phone number pasted
+  into a review), not every possible PII shape.
 
 ## B. Retrieval / RAG (`ai/rag/`)
 
@@ -89,6 +98,29 @@ actually executes, and the one with the most guardrails. See
    `STATEMENT_TIMEOUT_IN_SECONDS` and a hard row cap.
 5. **Clear failure modes**: a query that fails validation is never sent to
    Snowflake at all, and the user sees *why* (which rule it broke).
+
+## E. Metrics API (`ai/metrics_api/`)
+
+A thin, read-only FastAPI service (`app.py`) over the same canonical
+metrics `ai/text_to_sql/` reads, for callers that want a value without a
+chat UI: a dashboard, a scheduled report, another internal service.
+
+- **Same reader boundary, not a new one.** `get_metric()` runs under
+  `AI_READONLY_ROLE`, the same role and connection factory as `ai/rag/` and
+  `ai/text_to_sql/` (`ai/common/snowflake_client.py`). Adding this API did
+  not add a new Snowflake grant to reason about.
+- **One query shape.** `GET /metrics/{name}` runs `SELECT * FROM
+  <the metric's semantic_view> LIMIT n`, where the view and the row cap
+  both come from files this service ships with (`metrics.yml`,
+  `text_to_sql_row_limit`), never from the request. There's no
+  general-purpose filter/group-by query builder: the semantic view already
+  carries the metric's grain, and a caller needing a specific slice can
+  query Snowflake directly. Building a generic query layer before a real
+  caller needs one would be exactly the kind of unjustified complexity
+  ADR-007 argues against.
+- **`GET /metrics`** lists the same metric dictionary a human reading
+  `metrics.yml` or the text-to-SQL prompt would see, so this API can't
+  drift into naming a metric differently than the rest of the stack does.
 
 ## D. Future AI agents (not built)
 

@@ -51,30 +51,83 @@ A food-delivery platform needs:
 
 ## 3. Architecture diagram
 
-```
-                    DATA SOURCES
-                         │
-                         ▼
-                INGESTION / LANDING        immutable S3 landing · INGESTION_RUNS control table · idempotent COPY INTO
-                         │
-                         ▼
-                  BRONZE / RAW              verbatim source shape + _ingested_at/_source_file/_batch_id/_record_hash
-                         │
-                         ▼
-                 SILVER / STAGING          typed · deduplicated · standardized (dbt views)
-                         │
-                         ▼
-              GOLD / BUSINESS DATA        star schema + marts, business logic in one place (dbt macros)
-                         │
-                         ▼
-                  SEMANTIC LAYER          curated, documented, metric-named views + metrics.yml
-                    /          \
-                   ▼            ▼
-             AI / ML         BI / Analytics
-                │
-                ▼
-          AI APPLICATIONS
-     RAG · Text-to-SQL · (future agents)
+```mermaid
+flowchart TB
+    subgraph ORCH["Airflow: DAGs orchestrating (schedule: daily, catchup=false)"]
+        direction LR
+        O1["1 . ingestion"] --> O2["2 . dbt build<br/>Bronze to Silver to Gold"] --> O3["3 . AI enrichment"] --> O4["4 . publish / refresh apps"]
+    end
+
+    subgraph SRC["Data sources"]
+        direction TB
+        S1["CSV files"]
+        S2["APIs (future)"]
+        S3["DB extracts / CDC (future)"]
+    end
+
+    LAND["Ingestion / landing<br/>S3 raw landing zone<br/>run_id, batch_id, timestamp, load status<br/>idempotent, deduplicated"]
+
+    subgraph SNOW["Snowflake data platform"]
+        direction LR
+        BRONZE["Bronze / RAW<br/>verbatim from S3<br/>plus _ingested_at, _source_file,<br/>_batch_id, _record_hash<br/>no business logic"]
+        SILVER["Silver / STAGING<br/>dbt staging models<br/>type casting, dedup, standardize<br/>tests: not_null, unique, relationships"]
+        GOLD["Gold / MARTS<br/>star schema<br/>facts: orders, order_items<br/>dims: customer, restaurant, food, date"]
+        SEM["Semantic layer<br/>single source of truth<br/>metrics.yml: GMV, AOV, cancel rate, SLA<br/>curated views only, no raw or bronze access"]
+        BRONZE --> SILVER --> GOLD --> SEM
+    end
+
+    subgraph AI["AI / ML layer, governed access only"]
+        direction TB
+        AIENR["Batch AI enrichment<br/>sentiment, topic, PII scrub<br/>idempotent, retried, versioned"]
+        T2SQL["Text-to-SQL guardrails<br/>SELECT-only, allowlisted views<br/>row and timeout limits"]
+        RAG["RAG pipeline<br/>prepare, chunk, embed, store,<br/>retrieve, generate<br/>pluggable VectorStore"]
+        AGENTS["Agents, future slot<br/>tool registry over the same<br/>guardrailed metric and retrieval APIs"]
+    end
+
+    subgraph APPS["Applications"]
+        direction TB
+        BI["BI / analytics dashboards<br/>reads semantic views, not marts"]
+        STL["Streamlit AI<br/>NL analytics + review Q and A (RAG)"]
+        MAPI["Metrics API, read-only<br/>same definition everywhere"]
+    end
+
+    subgraph FLOOR["Monitoring / compute / data quality and governance"]
+        direction LR
+        MON["Monitoring and observability<br/>Airflow logs, Snowflake query history<br/>dbt docs and tests, alerts (email / Slack)"]
+        COMP["Compute<br/>Snowflake warehouse (ETL and transformations)"]
+        DQ["Data quality and governance<br/>dbt tests, data contracts, lineage (OpenLineage)"]
+    end
+
+    S1 --> LAND
+    S2 --> LAND
+    S3 --> LAND
+    LAND --> BRONZE
+    SEM --> AIENR
+    SEM --> T2SQL
+    SEM --> RAG
+    SEM --> BI
+    AIENR --> STL
+    RAG --> STL
+    T2SQL --> MAPI
+    ORCH -.-> LAND
+    ORCH -.-> SNOW
+    ORCH -.-> AI
+    ORCH -.-> APPS
+    SNOW -.-> DQ
+    SNOW -.-> MON
+
+    classDef orch fill:#d9f2d9,stroke:#4CAF50,color:#000;
+    classDef land fill:#ffe8cc,stroke:#e69138,color:#000;
+    classDef snow fill:#cfe2f3,stroke:#3d85c6,color:#000;
+    classDef ai fill:#cfe2f3,stroke:#3d85c6,color:#000;
+    classDef apps fill:#ffe8cc,stroke:#e69138,color:#000;
+    classDef floor fill:#f9d5d3,stroke:#cc4125,color:#000;
+    class ORCH orch
+    class LAND land
+    class SNOW snow
+    class AI ai
+    class APPS apps
+    class FLOOR floor
 ```
 
 Cross-cutting, applied at every layer: **Security · Governance · Data
@@ -134,7 +187,7 @@ trigger for revisiting that.
 
 ## 7. AI architecture
 
-Four separated concerns
+Separated concerns
 ([docs/architecture/04-ai-architecture.md](docs/architecture/04-ai-architecture.md)):
 
 - **A. Batch enrichment** (`ai/enrichment/`): idempotent, batched, retried,
@@ -142,6 +195,8 @@ Four separated concerns
   success and failure alike, is logged with `model_name`/`model_version`/
   `prompt_version` to `AI.ENRICHMENT_LOG`, so failures stay visible and
   reprocessable (`--reprocess-failed`) instead of getting silently dropped.
+  Comments are scrubbed of emails/phone numbers/card numbers (`pii.py`)
+  before they ever reach the LLM provider.
 - **B. RAG** (`ai/rag/`): split into `prepare → chunk → embed → store →
   retrieve → generate`, each stage independently swappable. No vector
   database here; a content-hash-cached Parquet embedding matrix is enough
@@ -153,6 +208,10 @@ Four separated concerns
   for a need this project doesn't have yet. The architecture is ready for
   it though: an agent would compose `ai/text_to_sql` and `ai/rag` as tools
   over the same `SEMANTIC` surface, with no new data-access pattern needed.
+- **E. Metrics API** (`ai/metrics_api/`): a thin read-only FastAPI service
+  over the same `metrics.yml` dictionary, for callers that want a metric
+  value without a chat UI. Same `AI_READONLY_ROLE` connection as B/C, not a
+  new access path.
 
 **Every one of these reads `SEMANTIC` only** (the enrichment writer reads
 `STAGING` and writes only to `AI`). See [ADR-006](docs/decisions/ADR-006-ai-above-governed-data.md).
@@ -181,7 +240,8 @@ Text-to-SQL guardrails are defense in depth, not a single check
    instead of inventing its own.
 2. **Static AST validation** (`sqlglot`, not a keyword blocklist): single
    statement, `SELECT`/`WITH` only, every table on the `SEMANTIC` allowlist,
-   `LIMIT` enforced and clamped. 34 unit tests in `tests/python/` cover this.
+   `LIMIT` enforced and clamped. 53 unit tests in `tests/python/` cover this
+   and the rest of the Python layer.
 3. **The real enforcement**: execution under `AI_READONLY_ROLE`,
    `SELECT`-only on `SEMANTIC`, no write privilege anywhere, with a session
    query timeout. A validator bug can produce a confusing error, but it
@@ -194,8 +254,12 @@ Text-to-SQL guardrails are defense in depth, not a single check
   grain, PK, required columns, allowed values, and freshness/quality
   expectations for each important dataset. The dbt tests are the
   enforcement; the contract is the human-readable promise.
-- **Lineage**: dbt's `ref()`/`source()` graph is the lineage tool, no
-  separate lineage product needed ([ADR-002](docs/decisions/ADR-002-dbt.md)).
+- **Lineage**: dbt's `ref()`/`source()` graph is the lineage tool for
+  `STAGING` through `SEMANTIC`/`AI`, no separate lineage product needed
+  ([ADR-002](docs/decisions/ADR-002-dbt.md)). When `OPENLINEAGE_URL` is
+  set, that graph and the one hop it doesn't cover (S3 → `RAW`) both emit
+  standard OpenLineage events (`dbt-ol`, `observability/lineage.py`) for
+  whatever backend is listening; none is deployed by this repo.
 - **ADRs** ([docs/decisions/](docs/decisions/)): the record of why, not
   just what.
 
@@ -206,7 +270,11 @@ long, did quality pass, how many AI records failed" without log-scraping
 ([docs/architecture/06-observability.md](docs/architecture/06-observability.md)):
 `INGESTION_RUNS`, `AI.ENRICHMENT_LOG`, `PUBLIC.PIPELINE_RUNS`. The Airflow
 DAG's `TaskGroup`s mirror the pipeline's logical stages, so the graph view
-is effectively the architecture diagram.
+is effectively the architecture diagram. A DAG failure or an AI
+quality-check breach also calls `observability/alerting.py`, which pushes
+to Slack/email if either is configured (both optional, blank by default);
+either way the control-table row is written, alerting just decides whether
+anything also pages a human.
 
 ## 12. Security
 
@@ -327,16 +395,17 @@ that.
 │   └── metrics/metrics.yml        Canonical metric dictionary
 ├── ai/
 │   ├── common/              Shared LLM client, role-scoped Snowflake connections, config
-│   ├── enrichment/           Batch AI enrichment (writer)
+│   ├── enrichment/           Batch AI enrichment (writer) + PII scrubbing
 │   ├── rag/                   Retrieval-augmented generation (reader)
 │   ├── text_to_sql/            Guardrailed natural-language analytics (reader)
-│   └── apps/                    Streamlit UIs
+│   ├── metrics_api/              Read-only FastAPI metrics service (reader)
+│   └── apps/                       Streamlit UIs
 ├── airflow/dags/            The orchestration DAG (thin, calls into the packages above)
-├── observability/           PIPELINE_RUNS control-table writer
+├── observability/           PIPELINE_RUNS control-table writer, alerting, lineage emission
 ├── snowflake/               One-time setup SQL (warehouse, roles, Bronze DDL, control tables)
 ├── infrastructure/terraform/  S3 + IAM + Snowflake warehouse/db/schemas/roles
 ├── docker/airflow/          Dockerfile + docker-compose for local Airflow
-├── tests/python/            Unit tests (34, no live credentials needed)
+├── tests/python/            Unit tests (53, no live credentials needed)
 ├── docs/
 │   ├── architecture/          01-07: overview, data flow, data model, AI, security, observability, data quality
 │   ├── decisions/               ADR-001..007
@@ -357,7 +426,7 @@ that.
 | RAG: one file, hardcoded Parquet, no swap path | `ai/rag/`: 6 single-purpose stages behind a `VectorStore` protocol | §7 |
 | Text-to-SQL: string blocklist, broad DB role, referenced columns that didn't exist in the marts | AST guardrails + `AI_READONLY_ROLE` (SELECT-only, SEMANTIC-only) + fixed the missing `cancel_rate`/`late_rate` columns | §9 |
 | One flat 4-task DAG | 9 `TaskGroup`s matching logical stages, explicit quality gates | §11, [ADR-003](docs/decisions/ADR-003-airflow.md) |
-| No tests, no CI, no IaC, no ADRs | 34 unit tests + dbt tests, GitHub Actions CI, Terraform for cloud infra, 7 ADRs | §13, §14, §16 |
+| No tests, no CI, no IaC, no ADRs | 53 unit tests + dbt tests, GitHub Actions CI, Terraform for cloud infra, 7 ADRs | §13, §14, §16 |
 
 ## Skills demonstrated
 

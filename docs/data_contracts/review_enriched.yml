@@ -20,6 +20,7 @@ required_columns:
   - prompt_version              # this repo's prompt version, e.g. "v1"
   - processed_at
   - batch_id                       # joins to INGESTION_RUNS-style run identity for the enrichment DAG run
+  - pii_redacted_count             # count of email/phone/card patterns redacted before this comment reached the LLM, see ai/enrichment/pii.py
 
 allowed_values:
   sentiment_label: ["positive", "neutral", "negative"]

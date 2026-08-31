@@ -6,11 +6,12 @@
 # so keep them in sync when bumping either file.
 snowflake-connector-python==4.7.2
 boto3==1.35.99
+openlineage-python==1.19.0
 openai==1.59.6
 tenacity==9.0.0
 sqlglot==26.3.1
 pydantic==2.10.5
 pydantic-settings==2.7.1
-python-dotenv==1.0.1
+python-dotenv==1.2.0
 PyYAML==6.0.2
 pandas==2.2.3
