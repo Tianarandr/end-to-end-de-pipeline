@@ -1,0 +1,111 @@
+-- Least-privilege roles. See docs/architecture/05-security.md.
+-- Run once per environment, after 00_setup.sql. Re-runnable (idempotent grants).
+--
+-- Usage: snowsql -f 01_roles_and_grants.sql -D env=DEV
+
+USE ROLE ACCOUNTADMIN;
+SET db_name = 'DELIVERY_' || '&env';
+USE DATABASE IDENTIFIER($db_name);
+
+-- ---------------------------------------------------------------------------
+-- LOADER_ROLE: ingestion/. Writes RAW + INGESTION_RUNS only.
+-- ---------------------------------------------------------------------------
+CREATE ROLE IF NOT EXISTS LOADER_ROLE
+    COMMENT = 'Ingestion writer. RAW + INGESTION_RUNS only. See ADR-004, 05-security.md.';
+
+GRANT USAGE, OPERATE ON WAREHOUSE DELIVERY_WH TO ROLE LOADER_ROLE;
+GRANT USAGE ON DATABASE IDENTIFIER($db_name) TO ROLE LOADER_ROLE;
+GRANT USAGE ON SCHEMA RAW TO ROLE LOADER_ROLE;
+GRANT USAGE ON SCHEMA PUBLIC TO ROLE LOADER_ROLE;
+GRANT USAGE ON INTEGRATION DELIVERY_S3_INT TO ROLE LOADER_ROLE;
+GRANT USAGE ON STAGE RAW.LANDING_STAGE TO ROLE LOADER_ROLE;
+
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA RAW TO ROLE LOADER_ROLE;
+GRANT SELECT, INSERT ON FUTURE TABLES IN SCHEMA RAW TO ROLE LOADER_ROLE;
+GRANT SELECT, INSERT ON TABLE PUBLIC.INGESTION_RUNS TO ROLE LOADER_ROLE;
+GRANT SELECT, INSERT ON TABLE PUBLIC.PIPELINE_RUNS TO ROLE LOADER_ROLE; -- publish task also uses LOADER_ROLE's identity in the reference DAG
+
+-- Not granted: anything on STAGING / MARTS / SEMANTIC / AI.
+
+-- ---------------------------------------------------------------------------
+-- TRANSFORM_ROLE: dbt. Reads RAW, writes STAGING/MARTS/SEMANTIC/SNAPSHOTS.
+-- ---------------------------------------------------------------------------
+CREATE ROLE IF NOT EXISTS TRANSFORM_ROLE
+    COMMENT = 'dbt. Reads RAW, writes STAGING/MARTS/SEMANTIC/SNAPSHOTS.';
+
+GRANT USAGE, OPERATE ON WAREHOUSE DELIVERY_WH TO ROLE TRANSFORM_ROLE;
+GRANT USAGE ON DATABASE IDENTIFIER($db_name) TO ROLE TRANSFORM_ROLE;
+GRANT USAGE ON ALL SCHEMAS IN DATABASE IDENTIFIER($db_name) TO ROLE TRANSFORM_ROLE;
+GRANT USAGE ON FUTURE SCHEMAS IN DATABASE IDENTIFIER($db_name) TO ROLE TRANSFORM_ROLE;
+
+GRANT SELECT ON ALL TABLES IN SCHEMA RAW TO ROLE TRANSFORM_ROLE;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA RAW TO ROLE TRANSFORM_ROLE;
+
+-- dbt needs full DDL/DML on the layers it owns:
+GRANT ALL ON SCHEMA STAGING  TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON SCHEMA MARTS    TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON SCHEMA SEMANTIC TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON SCHEMA SNAPSHOTS TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON ALL TABLES IN SCHEMA STAGING TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON ALL VIEWS  IN SCHEMA STAGING TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON FUTURE TABLES IN SCHEMA STAGING TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON FUTURE VIEWS  IN SCHEMA STAGING TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON ALL TABLES IN SCHEMA MARTS TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON FUTURE TABLES IN SCHEMA MARTS TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON ALL TABLES IN SCHEMA SEMANTIC TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON ALL VIEWS  IN SCHEMA SEMANTIC TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON FUTURE TABLES IN SCHEMA SEMANTIC TO ROLE TRANSFORM_ROLE;
+GRANT ALL ON FUTURE VIEWS  IN SCHEMA SEMANTIC TO ROLE TRANSFORM_ROLE;
+
+-- dbt's `_ai_sources.yml` lets a semantic/marts model join AI.REVIEW_ENRICHED
+-- (e.g. mart_review_insights). Read-only, and only that one table, not the schema.
+GRANT SELECT ON TABLE AI.REVIEW_ENRICHED TO ROLE TRANSFORM_ROLE;
+
+-- ---------------------------------------------------------------------------
+-- AI_ENRICH_ROLE: ai/enrichment/. Reads STAGING.STG_REVIEWS, writes AI only.
+-- ---------------------------------------------------------------------------
+CREATE ROLE IF NOT EXISTS AI_ENRICH_ROLE
+    COMMENT = 'Batch AI enrichment writer. Reads STAGING.STG_REVIEWS, writes AI schema only.';
+
+GRANT USAGE, OPERATE ON WAREHOUSE DELIVERY_WH TO ROLE AI_ENRICH_ROLE;
+GRANT USAGE ON DATABASE IDENTIFIER($db_name) TO ROLE AI_ENRICH_ROLE;
+GRANT USAGE ON SCHEMA STAGING TO ROLE AI_ENRICH_ROLE;
+GRANT USAGE ON SCHEMA AI TO ROLE AI_ENRICH_ROLE;
+GRANT SELECT ON VIEW STAGING.STG_REVIEWS TO ROLE AI_ENRICH_ROLE;
+GRANT ALL ON SCHEMA AI TO ROLE AI_ENRICH_ROLE;
+GRANT ALL ON ALL TABLES IN SCHEMA AI TO ROLE AI_ENRICH_ROLE;
+GRANT ALL ON FUTURE TABLES IN SCHEMA AI TO ROLE AI_ENRICH_ROLE;
+
+-- Not granted: RAW (any table), MARTS, SEMANTIC, or anything outside AI
+-- for writes.
+
+-- ---------------------------------------------------------------------------
+-- AI_READONLY_ROLE: ai/rag/, ai/text_to_sql/. SELECT on SEMANTIC only.
+-- This is the role text-to-SQL's generated queries actually execute under
+-- (see ADR-006). No write privilege anywhere, no access outside SEMANTIC.
+-- ---------------------------------------------------------------------------
+CREATE ROLE IF NOT EXISTS AI_READONLY_ROLE
+    COMMENT = 'RAG + text-to-SQL. SELECT on SEMANTIC only. See ADR-006.';
+
+GRANT USAGE, OPERATE ON WAREHOUSE DELIVERY_WH TO ROLE AI_READONLY_ROLE;
+GRANT USAGE ON DATABASE IDENTIFIER($db_name) TO ROLE AI_READONLY_ROLE;
+GRANT USAGE ON SCHEMA SEMANTIC TO ROLE AI_READONLY_ROLE;
+GRANT SELECT ON ALL VIEWS IN SCHEMA SEMANTIC TO ROLE AI_READONLY_ROLE;
+GRANT SELECT ON FUTURE VIEWS IN SCHEMA SEMANTIC TO ROLE AI_READONLY_ROLE;
+
+-- Session-level query timeout for this role (defense in depth alongside the
+-- app-level TEXT_TO_SQL_QUERY_TIMEOUT_SECONDS in ai/text_to_sql/executor.py):
+ALTER ROLE AI_READONLY_ROLE SET STATEMENT_TIMEOUT_IN_SECONDS = 30;
+
+-- ---------------------------------------------------------------------------
+-- Grant roles to the service users that will assume them. Users themselves
+-- get created out-of-band (SCIM/manual); this just wires up role membership.
+-- Swap in your actual service-account usernames below, matching .env's
+-- SNOWFLAKE_*_USER values.
+-- ---------------------------------------------------------------------------
+-- GRANT ROLE LOADER_ROLE      TO USER SVC_PIPELINE_LOADER;
+-- GRANT ROLE TRANSFORM_ROLE   TO USER SVC_PIPELINE_TRANSFORM;
+-- GRANT ROLE AI_ENRICH_ROLE   TO USER SVC_PIPELINE_AI_ENRICH;
+-- GRANT ROLE AI_READONLY_ROLE TO USER SVC_PIPELINE_AI_READONLY;
+
+SELECT 'roles_and_grants_complete' AS status;

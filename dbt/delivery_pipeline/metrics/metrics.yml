@@ -1,0 +1,86 @@
+# Business metric dictionary. See ADR-005.
+#
+# This file sits outside dbt's model-paths (dbt/delivery_pipeline/metrics/,
+# not dbt/delivery_pipeline/models/), so dbt never tries to parse it as a
+# schema file. ai/text_to_sql/schema_registry.py loads it directly by path,
+# and the LLM's prompt is built from the same file a human reads here.
+# There's exactly one copy of these definitions; don't duplicate them into
+# the AI layer.
+#
+# Each metric's `sql` has to match the macro/view it's actually computed by
+# in dbt (macros/metrics.sql, models/semantic/*.sql). If you change one,
+# change the other in the same commit.
+
+version: 1
+
+metrics:
+  - name: gross_merchandise_value
+    aliases: [gmv, revenue]
+    description: >
+      Total sales value of delivered orders (cancelled/refunded orders
+      excluded). The primary top-line revenue number.
+    grain: [order_date, city]
+    semantic_view: SEMANTIC.SEM_REVENUE_DAILY
+    column: gross_merchandise_value
+    sql: "SUM(IFF(is_delivered, sales_amount, 0))"
+    owner: analytics-team
+
+  - name: completed_orders
+    aliases: [delivered_orders]
+    description: Count of orders with order_status = 'Delivered'.
+    grain: [order_date, city]
+    semantic_view: SEMANTIC.SEM_REVENUE_DAILY
+    column: delivered_orders
+    sql: "COUNT_IF(is_delivered)"
+    owner: analytics-team
+
+  - name: cancellation_rate
+    description: Share of all orders (delivered + cancelled + refunded) that were cancelled.
+    grain: [order_date, city]
+    semantic_view: SEMANTIC.SEM_REVENUE_DAILY
+    column: cancel_rate
+    sql: "ROUND(DIV0(COUNT_IF(order_status = 'Cancelled'), COUNT(*)), 4)"
+    owner: analytics-team
+
+  - name: average_order_value
+    aliases: [aov]
+    description: Gross merchandise value divided by completed-order count.
+    grain: [order_date, city]
+    semantic_view: SEMANTIC.SEM_REVENUE_DAILY
+    column: average_order_value
+    sql: "ROUND(DIV0(SUM(IFF(is_delivered, sales_amount, 0)), COUNT_IF(is_delivered)), 2)"
+    owner: analytics-team
+
+  - name: delivery_sla
+    description: >
+      p50/p90 delivery time in minutes, and the share of delivered orders
+      exceeding the SLA threshold (delivery_sla_threshold_minutes dbt var,
+      currently 45 minutes).
+    grain: [city, order_hour]
+    semantic_view: SEMANTIC.SEM_DELIVERY_SLA
+    columns: [p50_delivery_min, p90_delivery_min, late_rate]
+    owner: ops-team
+
+  - name: restaurant_revenue
+    description: Gross merchandise value attributable to a single restaurant.
+    grain: [restaurant_id]
+    semantic_view: SEMANTIC.SEM_RESTAURANT_PERFORMANCE
+    column: revenue
+    owner: analytics-team
+
+  - name: customer_count
+    description: Distinct customers who have placed at least one order.
+    grain: [null]
+    semantic_view: SEMANTIC.SEM_ORDERS
+    sql: "COUNT(DISTINCT customer_id)"
+    owner: analytics-team
+
+  - name: review_sentiment
+    description: >
+      AI-derived sentiment label/score and topic classification for a
+      review. It's the one AI-derived value treated as a metric here,
+      because both dashboards and the AI layer reference it by this name.
+      Sourced from AI.REVIEW_ENRICHED (via MARTS.MART_REVIEW_INSIGHTS), not
+      SEMANTIC. See docs/architecture/04-ai-architecture.md.
+    grain: [review_id]
+    owner: ai-platform-team

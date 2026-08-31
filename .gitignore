@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment / secrets
+.env
+*.env.local
+**/profiles.yml
+!**/profiles.yml.example
+
+# dbt
+dbt/delivery_pipeline/target/
+dbt/delivery_pipeline/dbt_packages/
+dbt/delivery_pipeline/logs/
+dbt/delivery_pipeline/.user.yml
+
+# Airflow
+airflow/logs/
+docker/airflow/logs/
+docker/pgdata/
+
+# AI local caches (vector store cache, embeddings)
+ai/rag/.cache/
+*.parquet
+
+# Terraform
+infrastructure/terraform/**/.terraform/
+infrastructure/terraform/**/*.tfstate
+infrastructure/terraform/**/*.tfstate.backup
+infrastructure/terraform/**/.terraform.lock.hcl
+infrastructure/terraform/**/*.tfvars
+!infrastructure/terraform/**/*.tfvars.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Data (never commit raw source data)
+data/
+*.csv

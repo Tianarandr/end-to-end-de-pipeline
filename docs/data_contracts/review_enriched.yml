@@ -1,0 +1,43 @@
+# Data contract: AI.REVIEW_ENRICHED
+
+dataset: AI.REVIEW_ENRICHED
+owner: ai-platform-team
+description: >
+  One row per review that has been successfully classified by the batch AI
+  enrichment job (ai/enrichment/). Failed/in-progress attempts live in
+  AI.ENRICHMENT_LOG, not here; this table is success-only by construction.
+
+grain: One row per review_id (at most one row, since enrichment is idempotent and does not re-insert a review_id that already succeeded).
+primary_key: review_id
+
+required_columns:
+  - review_id
+  - sentiment_label     # one of allowed_values below
+  - sentiment_score        # float, -1.0 to 1.0
+  - topic
+  - model_name              # e.g. "gpt-4o-mini"
+  - model_version             # provider-reported model version string
+  - prompt_version              # this repo's prompt version, e.g. "v1"
+  - processed_at
+  - batch_id                       # joins to INGESTION_RUNS-style run identity for the enrichment DAG run
+  - pii_redacted_count             # count of email/phone/card patterns redacted before this comment reached the LLM, see ai/enrichment/pii.py
+
+allowed_values:
+  sentiment_label: ["positive", "neutral", "negative"]
+  topic: ["food quality", "delivery", "service", "packaging", "pricing", "other"]
+
+freshness_expectation:
+  description: >
+    Updated whenever ai_enrichment runs (daily, after data_quality passes). A review
+    with a comment in STG_REVIEWS should appear here (or in ENRICHMENT_LOG as FAILED)
+    within one DAG run of first appearing in staging.
+
+quality_expectations:
+  - "sentiment_score between -1.0 and 1.0, validated by the enrichment job's output schema before insert and not just by a downstream dbt test"
+  - "every row's model_name/model_version/prompt_version is non-null (full traceability requirement)"
+  - "no review_id present in both REVIEW_ENRICHED and a later FAILED ENRICHMENT_LOG row for the same batch; success is terminal"
+
+breaking_change_policy: >
+  Changing the classification taxonomy (topics, sentiment scale) is a prompt_version
+  bump, not an in-place mutation of existing rows; old rows keep their original
+  prompt_version so consumers can filter/normalize across taxonomy changes.

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# No production credentials anywhere in this workflow. dbt jobs use a
+# dummy 'ci' target (dbt/delivery_pipeline/profiles/profiles.yml.example)
+# that never connects to a real warehouse. See docs/architecture/05-security.md.
+
+jobs:
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check ingestion ai tests airflow observability scripts
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-metrics-api.txt
+      - run: pytest tests/python -v
+
+  config-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pydantic pydantic-settings PyYAML
+      - run: python scripts/validate_config.py
+
+  dbt-parse:
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ci
+      SNOWFLAKE_ACCOUNT: ci-placeholder
+      SNOWFLAKE_TRANSFORM_USER: ci-placeholder
+      SNOWFLAKE_TRANSFORM_PASSWORD: ci-placeholder
+      SNOWFLAKE_TRANSFORM_ROLE: TRANSFORM_ROLE
+      SNOWFLAKE_WAREHOUSE: DELIVERY_WH
+      SNOWFLAKE_DATABASE: DELIVERY_CI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dbt.txt
+      - name: dbt deps
+        run: dbt deps --project-dir dbt/delivery_pipeline --profiles-dir dbt/delivery_pipeline/profiles
+      - name: dbt parse (validates Jinja/YAML/refs, no warehouse connection needed)
+        run: dbt parse --project-dir dbt/delivery_pipeline --profiles-dir dbt/delivery_pipeline/profiles --target ci
+
+  sql-lint:
+    runs-on: ubuntu-latest
+    needs: dbt-parse
+    env:
+      ENVIRONMENT: ci
+      SNOWFLAKE_ACCOUNT: ci-placeholder
+      SNOWFLAKE_TRANSFORM_USER: ci-placeholder
+      SNOWFLAKE_TRANSFORM_PASSWORD: ci-placeholder
+      SNOWFLAKE_TRANSFORM_ROLE: TRANSFORM_ROLE
+      SNOWFLAKE_WAREHOUSE: DELIVERY_WH
+      SNOWFLAKE_DATABASE: DELIVERY_CI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dbt.txt sqlfluff==3.3.0 sqlfluff-templater-dbt==3.3.0
+      - run: dbt deps --project-dir dbt/delivery_pipeline --profiles-dir dbt/delivery_pipeline/profiles
+      - run: sqlfluff lint dbt/delivery_pipeline/models
+
+  airflow-dag-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          pip install "apache-airflow==3.0.3" "apache-airflow-providers-standard" \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.0.3/constraints-3.11.txt"
+          pip install -r requirements.txt
+      - name: Import the DAG (catches syntax errors, bad imports, cycle errors)
+        run: |
+          python -c "
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('delivery_pipeline_dag', 'airflow/dags/delivery_pipeline_dag.py')
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          assert mod.dag.dag_id == 'delivery_pipeline'
+          print(f'DAG OK: {len(mod.dag.tasks)} tasks')
+          "

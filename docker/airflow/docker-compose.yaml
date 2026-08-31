@@ -1,0 +1,86 @@
+# Local Airflow 3.x (LocalExecutor) on Docker. Same shape as the project's
+# original setup, updated for the redesigned repo layout. See
+# docs/architecture/06-observability.md and ADR-003.
+#
+#   cp ../../.env.example ../../.env   # fill in real values
+#   docker compose up -d --build       # UI: http://localhost:8080 (admin/admin)
+#
+# Unlike the original design, ingestion/ and ai/ manage their own Snowflake
+# connections directly from env vars (role-scoped, see docs/architecture/05-security.md).
+# There's no AIRFLOW_CONN_SNOWFLAKE_DEFAULT here, since nothing in this DAG
+# reaches Snowflake through an Airflow Connection any more.
+
+x-airflow-common: &airflow-common
+  build:
+    context: ../..
+    dockerfile: docker/airflow/Dockerfile
+  env_file:
+    - ../../.env
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/project/airflow/dags
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__FERNET_KEY: '${AIRFLOW_FERNET_KEY:-}'
+    AIRFLOW__API_AUTH__JWT_SECRET: '${AIRFLOW_API_JWT_SECRET:-change-me-in-.env}'
+    # Airflow 3: tasks reach the Execution API by the api-server's SERVICE NAME, not localhost.
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://apiserver:8080/execution/'
+    PYTHONPATH: /opt/airflow/project
+  volumes:
+    - ../..:/opt/airflow/project        # the whole repo: ingestion/, ai/, dbt/, observability/, airflow/dags
+    - ./logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - airflow db migrate && airflow users create --username admin --password admin --firstname a --lastname b --role Admin --email admin@example.com
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports: ["8080:8080"]
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
